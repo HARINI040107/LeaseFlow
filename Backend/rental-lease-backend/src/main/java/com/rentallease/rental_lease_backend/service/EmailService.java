@@ -1,35 +1,46 @@
 package com.rentallease.rental_lease_backend.service;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.Base64;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
+import com.resend.Resend;
+import com.resend.core.exception.ResendException;
+import com.resend.services.emails.model.Attachment;
+import com.resend.services.emails.model.CreateEmailOptions;
+import com.resend.services.emails.model.CreateEmailResponse;
 
 @Service
 public class EmailService {
 
-    private static final String RESEND_API_URL =
-            "https://api.resend.com/emails";
-
-    private final HttpClient httpClient;
-
-    @Value("${RESEND_API_KEY:}")
-    private String resendApiKey;
-
-    @Value("${RESEND_FROM_EMAIL:onboarding@resend.dev}")
-    private String fromEmail;
+    private final String resendApiKey;
+    private final String fromEmail;
+    private final Resend resend;
 
     public EmailService() {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+
+        // Read directly from the Render environment.
+        // This avoids Spring @Value property-resolution issues.
+        resendApiKey = System.getenv("RESEND_API_KEY");
+
+        String configuredFrom = System.getenv("RESEND_FROM_EMAIL");
+
+        fromEmail = (configuredFrom == null || configuredFrom.isBlank())
+                ? "onboarding@resend.dev"
+                : configuredFrom;
+
+        if (resendApiKey == null || resendApiKey.isBlank()) {
+            throw new IllegalStateException(
+                    "RESEND_API_KEY is not configured"
+            );
+        }
+
+        resend = new Resend(resendApiKey);
     }
+
+    // =========================================================
+    // TENANT INVITATION
+    // =========================================================
 
     public void sendTenantInvitation(
             String tenantEmail,
@@ -40,8 +51,15 @@ public class EmailService {
                 "LeaseFlow - Rental Agreement Invitation";
 
         String html = """
-                <div style="font-family:Arial,sans-serif;line-height:1.6;color:#172033">
-                    <h2 style="color:#173f5f">LeaseFlow</h2>
+                <div style="font-family:Arial,sans-serif;
+                            line-height:1.6;
+                            color:#172033;
+                            max-width:600px;
+                            margin:0 auto;">
+
+                    <h2 style="color:#173f5f;">
+                        LeaseFlow
+                    </h2>
 
                     <p>Hello %s,</p>
 
@@ -55,11 +73,14 @@ public class EmailService {
                         information and provide your digital signature.
                     </p>
 
-                    <p>
+                    <p style="margin:30px 0;">
                         <a href="%s"
-                           style="display:inline-block;padding:12px 20px;
-                                  background:#173f5f;color:white;
-                                  text-decoration:none;border-radius:6px;">
+                           style="display:inline-block;
+                                  padding:12px 20px;
+                                  background:#173f5f;
+                                  color:white;
+                                  text-decoration:none;
+                                  border-radius:6px;">
                             Complete Rental Agreement
                         </a>
                     </p>
@@ -68,7 +89,9 @@ public class EmailService {
                         Or copy and paste this link into your browser:
                     </p>
 
-                    <p>%s</p>
+                    <p style="word-break:break-all;">
+                        %s
+                    </p>
 
                     <p>
                         This invitation link is valid for 7 days.
@@ -78,6 +101,7 @@ public class EmailService {
                         Thank you,<br>
                         <strong>LeaseFlow</strong>
                     </p>
+
                 </div>
                 """.formatted(
                         escapeHtml(tenantName),
@@ -93,6 +117,10 @@ public class EmailService {
         );
     }
 
+    // =========================================================
+    // TENANT COMPLETED NOTIFICATION
+    // =========================================================
+
     public void sendTenantCompletedNotification(
             String homeownerEmail,
             String tenantName) {
@@ -101,8 +129,15 @@ public class EmailService {
                 "LeaseFlow - Tenant Application Completed";
 
         String html = """
-                <div style="font-family:Arial,sans-serif;line-height:1.6;color:#172033">
-                    <h2 style="color:#173f5f">LeaseFlow</h2>
+                <div style="font-family:Arial,sans-serif;
+                            line-height:1.6;
+                            color:#172033;
+                            max-width:600px;
+                            margin:0 auto;">
+
+                    <h2 style="color:#173f5f;">
+                        LeaseFlow
+                    </h2>
 
                     <p>Hello,</p>
 
@@ -120,6 +155,7 @@ public class EmailService {
                         Thank you,<br>
                         <strong>LeaseFlow</strong>
                     </p>
+
                 </div>
                 """.formatted(
                         escapeHtml(tenantName)
@@ -133,6 +169,10 @@ public class EmailService {
         );
     }
 
+    // =========================================================
+    // COMPLETED AGREEMENT + PDF ATTACHMENT
+    // =========================================================
+
     public void sendCompletedAgreement(
             String recipientEmail,
             String recipientName,
@@ -142,8 +182,15 @@ public class EmailService {
                 "LeaseFlow - Completed Rental Agreement";
 
         String html = """
-                <div style="font-family:Arial,sans-serif;line-height:1.6;color:#172033">
-                    <h2 style="color:#173f5f">LeaseFlow</h2>
+                <div style="font-family:Arial,sans-serif;
+                            line-height:1.6;
+                            color:#172033;
+                            max-width:600px;
+                            margin:0 auto;">
+
+                    <h2 style="color:#173f5f;">
+                        LeaseFlow
+                    </h2>
 
                     <p>Hello %s,</p>
 
@@ -164,6 +211,7 @@ public class EmailService {
                         Thank you,<br>
                         <strong>LeaseFlow</strong>
                     </p>
+
                 </div>
                 """.formatted(
                         escapeHtml(recipientName)
@@ -177,137 +225,72 @@ public class EmailService {
         );
     }
 
+    // =========================================================
+    // COMMON SEND METHOD
+    // =========================================================
+
     private void sendEmail(
             String recipientEmail,
             String subject,
             String html,
-            byte[] attachment) {
+            byte[] attachmentBytes) {
 
         try {
 
-            validateConfiguration();
+            CreateEmailOptions.Builder builder =
+                    CreateEmailOptions.builder()
+                            .from(fromEmail)
+                            .to(recipientEmail)
+                            .subject(subject)
+                            .html(html);
 
-            StringBuilder json = new StringBuilder();
+            // Add PDF attachment when provided.
+            if (attachmentBytes != null &&
+                    attachmentBytes.length > 0) {
 
-            json.append("{")
-                    .append("\"from\":")
-                    .append(jsonString(fromEmail))
-                    .append(",")
-
-                    .append("\"to\":[")
-                    .append(jsonString(recipientEmail))
-                    .append("],")
-
-                    .append("\"subject\":")
-                    .append(jsonString(subject))
-                    .append(",")
-
-                    .append("\"html\":")
-                    .append(jsonString(html));
-
-            if (attachment != null) {
-
-                String base64 =
+                String base64Content =
                         Base64.getEncoder()
-                                .encodeToString(attachment);
+                                .encodeToString(attachmentBytes);
 
-                json.append(",")
-                        .append("\"attachments\":[{")
-                        .append("\"filename\":\"completed-rental-agreement.pdf\",")
-                        .append("\"content\":")
-                        .append(jsonString(base64))
-                        .append("}]");
+                Attachment attachment =
+                        Attachment.builder()
+                                .fileName(
+                                        "completed-rental-agreement.pdf"
+                                )
+                                .content(base64Content)
+                                .contentType("application/pdf")
+                                .build();
+
+                builder.addAttachment(attachment);
             }
 
-            json.append("}");
+            CreateEmailResponse response =
+                    resend.emails().send(builder.build());
 
-            HttpRequest request =
-                    HttpRequest.newBuilder()
-                            .uri(URI.create(RESEND_API_URL))
-                            .timeout(Duration.ofSeconds(20))
-                            .header(
-                                    "Authorization",
-                                    "Bearer " + resendApiKey
-                            )
-                            .header(
-                                    "Content-Type",
-                                    "application/json"
-                            )
-                            .POST(
-                                    HttpRequest.BodyPublishers
-                                            .ofString(json.toString())
-                            )
-                            .build();
+            System.out.println(
+                    "LeaseFlow email sent successfully. Email ID: "
+                            + response.getId()
+            );
 
-            HttpResponse<String> response =
-                    httpClient.send(
-                            request,
-                            HttpResponse.BodyHandlers.ofString()
-                    );
-
-            if (response.statusCode() < 200 ||
-                    response.statusCode() >= 300) {
-
-                throw new RuntimeException(
-                        "Resend email failed (" +
-                                response.statusCode() +
-                                "): " +
-                                response.body()
-                );
-            }
-
-        } catch (IOException e) {
+        } catch (ResendException e) {
 
             throw new RuntimeException(
-                    "Unable to connect to Resend email API",
+                    "Resend email failed: " + e.getMessage(),
                     e
             );
 
-        } catch (InterruptedException e) {
-
-            Thread.currentThread().interrupt();
+        } catch (Exception e) {
 
             throw new RuntimeException(
-                    "Email request was interrupted",
+                    "Unable to send email through Resend",
                     e
             );
         }
     }
 
-    private void validateConfiguration() {
-
-        if (resendApiKey == null ||
-                resendApiKey.isBlank()) {
-
-            throw new IllegalStateException(
-                    "RESEND_API_KEY is not configured"
-            );
-        }
-
-        if (fromEmail == null ||
-                fromEmail.isBlank()) {
-
-            throw new IllegalStateException(
-                    "RESEND_FROM_EMAIL is not configured"
-            );
-        }
-    }
-
-    private String jsonString(String value) {
-
-        if (value == null) {
-            return "\"\"";
-        }
-
-        return "\"" +
-                value
-                        .replace("\\", "\\\\")
-                        .replace("\"", "\\\"")
-                        .replace("\r", "\\r")
-                        .replace("\n", "\\n")
-                        .replace("\t", "\\t")
-                + "\"";
-    }
+    // =========================================================
+    // HTML ESCAPING
+    // =========================================================
 
     private String escapeHtml(String value) {
 
